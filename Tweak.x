@@ -1,3 +1,5 @@
+// clang-format off
+
 #import <version.h>
 #import "Header.h"
 #import "../YouTubeHeader/GIMBindingBuilder.h"
@@ -35,6 +37,10 @@ extern BOOL LegacyPiP();
 
 BOOL UsePiPButton() {
     return [[NSUserDefaults standardUserDefaults] boolForKey:PiPActivationMethodKey];
+}
+
+BOOL NoMiniPlayerPiP() {
+    return [[NSUserDefaults standardUserDefaults] boolForKey:NoMiniPlayerPiPKey];
 }
 
 BOOL UseTabBarPiPButton() {
@@ -321,8 +327,58 @@ static NSMutableArray *topControls(YTMainAppControlsOverlayView *self, NSMutable
 
 %hook MLPIPController
 
+- (void)activatePiPController {
+    %orig;
+    if (!IS_IOS_OR_NEWER(iOS_15_0) && !LegacyPiP()) {
+        MLHAMSBDLSampleBufferRenderingView *view = [self valueForKey:@"_HAMPlayerView"];
+        CGSize size = [self renderSizeForView:view];
+        AVPictureInPictureController *avpip = [self valueForKey:@"_pictureInPictureController"];
+        [avpip sampleBufferDisplayLayerRenderSizeDidChangeToSize:size];
+        [avpip sampleBufferDisplayLayerDidAppear];
+    }
+}
+
 - (BOOL)isPictureInPictureSupported {
     return YES;
+}
+
+%new
+- (BOOL)pictureInPictureControllerPlaybackPaused:(AVPictureInPictureController *)pictureInPictureController {
+    return [self pictureInPictureControllerIsPlaybackPaused:pictureInPictureController];
+}
+
+%new
+- (void)pictureInPictureControllerStartPlayback:(id)arg1 {
+    [self pictureInPictureControllerStartPlayback];
+}
+
+%new
+- (void)pictureInPictureControllerStopPlayback:(id)arg1 {
+    [self pictureInPictureControllerStopPlayback];
+}
+
+%new
+- (void)renderingViewSampleBufferFrameSizeDidChange:(CGSize)size {
+    if (!IS_IOS_OR_NEWER(iOS_15_0) && size.width && size.height) {
+        AVPictureInPictureController *avpip = [self valueForKey:@"_pictureInPictureController"];
+        [avpip sampleBufferDisplayLayerRenderSizeDidChangeToSize:size];
+    }
+}
+
+%new
+- (void)appWillEnterForeground:(id)arg1 {
+    if (!IS_IOS_OR_NEWER(iOS_15_0) && !LegacyPiP()) {
+        AVPictureInPictureController *avpip = [self valueForKey:@"_pictureInPictureController"];
+        [avpip sampleBufferDisplayLayerDidAppear];
+    }
+}
+
+%new
+- (void)appWillEnterBackground:(id)arg1 {
+    if (!IS_IOS_OR_NEWER(iOS_15_0) && !LegacyPiP()) {
+        AVPictureInPictureController *avpip = [self valueForKey:@"_pictureInPictureController"];
+        [avpip sampleBufferDisplayLayerDidDisappear];
+    }
 }
 
 %end
@@ -423,7 +479,8 @@ static YTHotConfig *getHotConfig(YTPlayerPIPController *self) {
 - (void)appWillResignActive:(id)arg1 {
     // If PiP button on, PiP doesn't activate on app resign unless it's from user
     BOOL hasPiPButton = UsePiPButton() || UseTabBarPiPButton();
-    BOOL disablePiP = hasPiPButton && !FromUser;
+    BOOL isMiniPlayer = [(YTLocalPlaybackController *)[self valueForKey:@"_delegate"] playerVisibility] == 1;
+    BOOL disablePiP = (NoMiniPlayerPiP() && isMiniPlayer) || (hasPiPButton && !FromUser);
     if (disablePiP) {
         MLPIPController *pip = [self valueForKey:@"_pipController"];
         [pip setValue:nil forKey:@"_pictureInPictureController"];
